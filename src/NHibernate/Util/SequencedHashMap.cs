@@ -1,735 +1,746 @@
-#region The Apache Software License, Version 1.1
-
-/* This is a port from the Jakarta commons project */
-
-/*
- * ====================================================================
- *
- * The Apache Software License, Version 1.1
- *
- * Copyright (c) 1999-2002 The Apache Software Foundation.  All rights
- * reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. The end-user documentation included with the redistribution, if
- *    any, must include the following acknowledgement:
- *       "This product includes software developed by the
- *        Apache Software Foundation (http://www.apache.org/)."
- *    Alternately, this acknowledgement may appear in the software itself,
- *    if and wherever such third-party acknowledgements normally appear.
- *
- * 4. The names "The Jakarta Project", "Commons", and "Apache Software
- *    Foundation" must not be used to endorse or promote products derived
- *    from this software without prior written permission. For written
- *    permission, please contact apache@apache.org.
- *
- * 5. Products derived from this software may not be called "Apache"
- *    nor may "Apache" appear in their names without prior written
- *    permission of the Apache Group.
- *
- * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESSED OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED.  IN NO EVENT SHALL THE APACHE SOFTWARE FOUNDATION OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
- * USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
- * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- * ====================================================================
- *
- * This software consists of voluntary contributions made by many
- * individuals on behalf of the Apache Software Foundation.  For more
- * information on the Apache Software Foundation, please see
- * <http://www.apache.org/>.
- *
- */
-
-#endregion
-
-using System;
+﻿using System;
 using System.Collections;
-using System.Diagnostics;
-using System.Text;
-using NHibernate.DebugHelpers;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.Serialization;
+using System.Text;
 
 namespace NHibernate.Util
 {
-	/// <summary>
-	/// A map of objects whose mapping entries are sequenced based on the order in which they were
-	/// added. This data structure has fast <c>O(1)</c> search time, deletion time, and insertion time
-	/// </summary>
-	/// <remarks>
-	/// This class is not thread safe.
-	/// </remarks>
-	[DebuggerTypeProxy(typeof(CollectionProxy<>))]
-	[Serializable]
-	public class SequencedHashMap : IDictionary, IDeserializationCallback
-	{
-		[Serializable]
-		private class Entry
-		{
-			private object _key;
-			private object _value;
-
-			private Entry _next = null;
-			private Entry _prev = null;
-
-			public Entry(object key, object value)
-			{
-				_key = key;
-				_value = value;
-			}
-
-			public object Key
-			{
-				get { return _key; }
-			}
-
-			public object Value
-			{
-				get { return _value; }
-				set { _value = value; }
-			}
-
-			public Entry Next
-			{
-				get { return _next; }
-				set { _next = value; }
-			}
-
-			public Entry Prev
-			{
-				get { return _prev; }
-				set { _prev = value; }
-			}
-
-			#region System.Object Members
-
-			public override int GetHashCode()
-			{
-				return ((_key == null ? 0 : _key.GetHashCode()) ^ (_value == null ? 0 : _value.GetHashCode()));
-			}
-
-			public override bool Equals(object obj)
-			{
-				Entry other = obj as Entry;
-				if (other == null) return false;
-				if (other == this) return true;
-
-				return ((_key == null ? other.Key == null : _key.Equals(other.Key)) &&
-						(_value == null ? other.Value == null : _value.Equals(other.Value)));
-			}
-
-			public override string ToString()
-			{
-				return "[" + _key + "=" + _value + "]";
-			}
-
-			#endregion
-		}
-
-
-		/// <summary>
-		/// Construct an empty sentinel used to hold the head (sentinel.next) and the tail (sentinal.prev)
-		/// of the list. The sentinal has a <see langword="null" /> key and value
-		/// </summary>
-		/// <returns></returns>
-		private static Entry CreateSentinel()
-		{
-			Entry s = new Entry(null, null);
-			s.Prev = s;
-			s.Next = s;
-			return s;
-		}
-
-		/// <summary>
-		/// Sentinel used to hold the head and tail of the list of entries
-		/// </summary>
-		private Entry _sentinel;
-
-		/// <summary>
-		/// Map of keys to entries
-		/// </summary>
-		private Hashtable _entries;
-
-		/// <summary>
-		/// Holds the number of modifications that have occurred to the map, excluding modifications
-		/// made through a collection view's iterator.
-		/// </summary>
-		private long _modCount = 0;
-
-		/// <summary>
-		/// Construct a new sequenced hash map with default initial size and load factor
-		/// </summary>
-		public SequencedHashMap()
-			: this(0, 1.0F, null)
-		{
-		}
-
-		/// <summary>
-		/// Construct a new sequenced hash map with the specified initial size and default load factor
-		/// </summary>
-		/// <param name="capacity">the initial size for the hash table</param>
-		public SequencedHashMap(int capacity)
-			: this(capacity, 1.0F, null)
-		{
-		}
-
-		/// <summary>
-		/// Construct a new sequenced hash map with the specified initial size and load factor
-		/// </summary>
-		/// <param name="capacity">the initial size for the hashtable</param>
-		/// <param name="loadFactor">the load factor for the hash table</param>
-		public SequencedHashMap(int capacity, float loadFactor)
-			: this(capacity, loadFactor, null)
-		{
-		}
-
-		/// <summary>
-		/// Construct a new sequenced hash map with the specified initial size, hash code provider
-		/// and comparer
-		/// </summary>
-		/// <param name="capacity">the initial size for the hashtable</param>
-		/// <param name="equalityComparer"></param>
-		public SequencedHashMap(int capacity, IEqualityComparer equalityComparer)
-			: this(capacity, 1.0F, equalityComparer)
-		{
-		}
-
-		/// <summary>
-		/// Creates an empty Hashtable with the default initial capacity and using the default load factor, 
-		/// the specified hash code provider and the specified comparer
-		/// </summary>
-		/// <param name="equalityComparer"></param>
-		public SequencedHashMap(IEqualityComparer equalityComparer)
-			: this(0, 1.0F, equalityComparer)
-		{
-		}
-
-		/// <summary>
-		/// Creates an empty Hashtable with the default initial capacity and using the default load factor, 
-		/// the specified hash code provider and the specified comparer
-		/// </summary>
-		/// <param name="capacity">the initial size for the hashtable</param>
-		/// <param name="loadFactor">the load factor for the hash table</param>
-		/// <param name="equalityComparer"></param>
-		public SequencedHashMap(int capacity, float loadFactor, IEqualityComparer equalityComparer)
-		{
-			_sentinel = CreateSentinel();
-			_entries = new Hashtable(capacity, loadFactor, equalityComparer);
-		}
-
-		/// <summary>
-		/// Removes an internal entry from the linked list. THis does not remove it from the underlying
-		/// map.
-		/// </summary>
-		/// <param name="entry"></param>
-		private void RemoveEntry(Entry entry)
-		{
-			entry.Next.Prev = entry.Prev;
-			entry.Prev.Next = entry.Next;
-		}
-
-		/// <summary>
-		/// Inserts a new internal entry to the tail of the linked list. This does not add the 
-		/// entry to the underlying map.
-		/// </summary>
-		/// <param name="entry"></param>
-		private void InsertEntry(Entry entry)
-		{
-			entry.Next = _sentinel;
-			entry.Prev = _sentinel.Prev;
-			_sentinel.Prev.Next = entry;
-			_sentinel.Prev = entry;
-		}
-
-		#region System.Collections.IDictionary Members
-
-		/// <summary></summary>
-		public virtual bool IsFixedSize
-		{
-			get { return false; }
-		}
-
-		/// <summary></summary>
-		public virtual bool IsReadOnly
-		{
-			get { return false; }
-		}
-
-		/// <summary></summary>
-		public virtual object this[object o]
-		{
-			get
-			{
-				Entry entry = (Entry)_entries[o];
-				if (entry == null) return null;
-
-				return entry.Value;
-			}
-			set
-			{
-				_modCount++;
-
-				Entry e = (Entry)_entries[o];
-				if (e != null)
-				{
-					RemoveEntry(e);
-					e.Value = value;
-				}
-				else
-				{
-					e = new Entry(o, value);
-					_entries[o] = e;
-				}
-
-				InsertEntry(e);
-			}
-		}
-
-		/// <summary></summary>
-		public virtual ICollection Keys
-		{
-			get { return new KeyCollection(this); }
-		}
-
-		/// <summary></summary>
-		public virtual ICollection Values
-		{
-			get { return new ValuesCollection(this); }
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="key"></param>
-		/// <param name="value"></param>
-		public virtual void Add(object key, object value)
-		{
-			this[key] = value;
-		}
-
-		/// <summary></summary>
-		public virtual void Clear()
-		{
-			_modCount++;
-
-			_entries.Clear();
-
-			_sentinel.Next = _sentinel;
-			_sentinel.Prev = _sentinel;
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="key"></param>
-		/// <returns></returns>
-		public virtual bool Contains(object key)
-		{
-			return ContainsKey(key);
-		}
-
-		/// <summary></summary>
-		public virtual IDictionaryEnumerator GetEnumerator()
-		{
-			return new OrderedEnumerator(this, ReturnType.ReturnEntry);
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="key"></param>
-		public virtual void Remove(object key)
-		{
-			RemoveImpl(key);
-		}
-
-		#endregion
-
-		#region System.Collections.ICollection Members
-
-		/// <summary></summary>
-		public virtual int Count
-		{
-			get { return _entries.Count; }
-		}
-
-		/// <summary></summary>
-		public virtual bool IsSynchronized
-		{
-			get { return false; }
-		}
-
-		/// <summary></summary>
-		public virtual object SyncRoot
-		{
-			get { return this; }
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="array"></param>
-		/// <param name="index"></param>
-		public virtual void CopyTo(Array array, int index)
-		{
-			foreach (DictionaryEntry de in this)
-			{
-				array.SetValue(de, index++);
-			}
-		}
-
-		#endregion
-
-		#region System.Collections.IEnumerable Members
-
-		/// <summary></summary>
-		IEnumerator IEnumerable.GetEnumerator()
-		{
-			return new OrderedEnumerator(this, ReturnType.ReturnEntry);
-		}
-
-		#endregion
-
-		private bool IsEmpty
-		{
-			get { return _sentinel.Next == _sentinel; }
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="key"></param>
-		/// <returns></returns>
-		public virtual bool ContainsKey(object key)
-		{
-			return _entries.ContainsKey(key);
-		}
-
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="value"></param>
-		/// <returns></returns>
-		public virtual bool ContainsValue(object value)
-		{
-			if (value == null)
-			{
-				for (Entry pos = _sentinel.Next; pos != _sentinel; pos = pos.Next)
-				{
-					if (pos.Value == null) return true;
-				}
-			}
-			else
-			{
-				for (Entry pos = _sentinel.Next; pos != _sentinel; pos = pos.Next)
-				{
-					if (value.Equals(pos.Value)) return true;
-				}
-			}
-			return false;
-		}
-
-
-		private Entry First
-		{
-			get { return (IsEmpty) ? null : _sentinel.Next; }
-		}
-
-		/// <summary></summary>
-		public virtual object FirstKey
-		{
-			get { return (First == null) ? null : First.Key; }
-		}
-
-		/// <summary></summary>
-		public virtual object FirstValue
-		{
-			get { return (First == null) ? null : First.Value; }
-		}
-
-		private Entry Last
-		{
-			get { return (IsEmpty) ? null : _sentinel.Prev; }
-		}
-
-		/// <summary></summary>
-		public virtual object LastKey
-		{
-			get { return (Last == null) ? null : Last.Key; }
-		}
-
-		/// <summary></summary>
-		public virtual object LastValue
-		{
-			get { return (Last == null) ? null : Last.Value; }
-		}
-
-		public void OnDeserialization(object sender)
-		{
-			_entries.OnDeserialization(sender);
-		}
-
-		/// <summary>
-		/// Remove the Entry identified by the Key if it exists.
-		/// </summary>
-		/// <param name="key">The Key to remove.</param>
-		private void RemoveImpl(object key)
-		{
-			Entry e = (Entry)_entries[key];
-			if (e != null)
-			{
-				_entries.Remove(key);
-				_modCount++;
-				RemoveEntry(e);
-			}
-		}
-
-		#region System.Object Members
-
-		/// <summary></summary>
-		public override string ToString()
-		{
-			StringBuilder buf = new StringBuilder();
-			buf.Append('[');
-			for (Entry pos = _sentinel.Next; pos != _sentinel; pos = pos.Next)
-			{
-				buf.Append(pos.Key);
-				buf.Append('=');
-				buf.Append(pos.Value);
-				if (pos.Next != _sentinel)
-				{
-					buf.Append(',');
-				}
-			}
-			buf.Append(']');
-
-			return buf.ToString();
-		}
-
-		#endregion
-
-		private class KeyCollection : ICollection
-		{
-			private SequencedHashMap _parent;
-
-			public KeyCollection(SequencedHashMap parent)
-			{
-				_parent = parent;
-			}
-
-			#region System.Collections.ICollection Members
-
-			public int Count
-			{
-				get { return _parent.Count; }
-			}
-
-			public bool IsSynchronized
-			{
-				get { return false; }
-			}
-
-			public object SyncRoot
-			{
-				get { return this; }
-			}
-
-			public void CopyTo(Array array, int index)
-			{
-				foreach (object obj in this)
-				{
-					array.SetValue(obj, index++);
-				}
-			}
-
-			#endregion
-
-			#region System.Collections.IEnumerable Members
-
-			public IEnumerator GetEnumerator()
-			{
-				return new OrderedEnumerator(_parent, ReturnType.ReturnKey);
-			}
-
-			#endregion
-
-			public bool Contains(object o)
-			{
-				return _parent.ContainsKey(o);
-			}
-		}
-
-
-		private class ValuesCollection : ICollection
-		{
-			private SequencedHashMap _parent;
-
-			public ValuesCollection(SequencedHashMap parent)
-			{
-				_parent = parent;
-			}
-
-			#region System.Collections.ICollection Members
-
-			public int Count
-			{
-				get { return _parent.Count; }
-			}
-
-			public bool IsSynchronized
-			{
-				get { return false; }
-			}
-
-			public object SyncRoot
-			{
-				get { return this; }
-			}
-
-			public void CopyTo(Array array, int index)
-			{
-				foreach (object obj in this)
-				{
-					array.SetValue(obj, index++);
-				}
-			}
-
-			#endregion
-
-			#region System.Collections.IEnumerable Members
-
-			public IEnumerator GetEnumerator()
-			{
-				return new OrderedEnumerator(_parent, ReturnType.ReturnValue);
-			}
-
-			#endregion
-
-			public bool Contains(object o)
-			{
-				return _parent.ContainsValue(o);
-			}
-		}
-
-
-		private enum ReturnType
-		{
-			/// <summary>
-			/// Return only the Key of the DictionaryEntry
-			/// </summary>
-			ReturnKey,
-
-			/// <summary>
-			/// Return only the Value of the DictionaryEntry
-			/// </summary>
-			ReturnValue,
-
-			/// <summary>
-			/// Return the full DictionaryEntry
-			/// </summary>
-			ReturnEntry
-		}
-
-
-		private class OrderedEnumerator : IDictionaryEnumerator
-		{
-			private SequencedHashMap _parent;
-			private ReturnType _returnType;
-			private Entry _pos;
-			private long _expectedModCount;
-
-			public OrderedEnumerator(SequencedHashMap parent, ReturnType returnType)
-			{
-				_parent = parent;
-				_returnType = returnType;
-				_pos = _parent._sentinel;
-				_expectedModCount = _parent._modCount;
-			}
-
-			#region System.Collections.IEnumerator Members
-
-			public object Current
-			{
-				get
-				{
-					if (_parent._modCount != _expectedModCount)
-					{
-						throw new InvalidOperationException("Enumerator was modified");
-					}
-
-
-					switch (_returnType)
-					{
-						case ReturnType.ReturnKey:
-							return _pos.Key;
-						case ReturnType.ReturnValue:
-							return _pos.Value;
-						case ReturnType.ReturnEntry:
-							return new DictionaryEntry(_pos.Key, _pos.Value);
-					}
-					return null;
-				}
-			}
-
-			public bool MoveNext()
-			{
-				if (_parent._modCount != _expectedModCount)
-				{
-					throw new InvalidOperationException("Enumerator was modified");
-				}
-				if (_pos.Next == _parent._sentinel)
-				{
-					return false;
-				}
-
-				_pos = _pos.Next;
-
-				return true;
-			}
-
-			public void Reset()
-			{
-				_pos = _parent._sentinel;
-			}
-
-			#endregion
-
-			#region System.Collection.IDictionaryEnumerator Members
-
-			public DictionaryEntry Entry
-			{
-				get { return new DictionaryEntry(_pos.Key, _pos.Value); }
-			}
-
-			public object Key
-			{
-				get { return _pos.Key; }
-			}
-
-			public object Value
-			{
-				get { return _pos.Value; }
-			}
-
-			#endregion
-		}
-	}
+    [Serializable]
+    public class SequencedHashMap : IDictionary, IDeserializationCallback
+    {
+        /// <summary>
+        /// Circular Doubly Linked List
+        /// </summary>
+        [Serializable]
+        private class SequenceRecord
+        {
+            private object _key;
+            private object _value;
+
+            private SequenceRecord _nextRecord = null;
+            private SequenceRecord _prevRecord = null;
+
+            public SequenceRecord()
+                : this(null, null)
+            {
+            }
+
+            public SequenceRecord(object key, object value)
+            {
+                _key = key;
+                _value = value;
+            }
+
+            public object Key
+            {
+                get { return _key; }
+            }
+
+            public object Value
+            {
+                get { return _value; }
+                set { _value = value; }
+            }
+
+            public SequenceRecord NextRecord
+            {
+                get { return _nextRecord; }
+                set { _nextRecord = value; }
+            }
+
+            public SequenceRecord PrevRecord
+            {
+                get { return _prevRecord; }
+                set { _prevRecord = value; }
+            }
+
+            #region System.Object Members
+
+            public override int GetHashCode()
+            {
+                return ((_key == null ? 0 : _key.GetHashCode()) ^ (_value == null ? 0 : _value.GetHashCode()));
+            }
+
+            public override bool Equals(object obj)
+            {
+                var other = obj as SequenceRecord;
+                if (other == null) return false;
+                if (other == this) return true;
+
+                return ((_key == null ? other.Key == null : _key.Equals(other.Key)) &&
+                        (_value == null ? other.Value == null : _value.Equals(other.Value)));
+            }
+
+            public override string ToString()
+            {
+                return string.Format("[{0}={1}]", _key, _value);
+            }
+
+            #endregion
+        }
+
+        [Serializable]
+        protected abstract class KeyValueCollectionBase : ICollection
+        {
+            protected SequencedHashMap Container
+            {
+                get;
+                private set;
+            }
+
+            #region Protected Constructors
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="KeyValueCollectionBase"/> class.
+            /// </summary>
+            /// <param name="container">The container.</param>
+            protected KeyValueCollectionBase(SequencedHashMap container)
+            {
+                Container = container;
+            }
+
+            /// <summary>
+            /// Gets the number of elements contained in the <see cref="T:System.Collections.ICollection" />.
+            /// </summary>
+            public int Count
+            {
+                get { return Container.Count; }
+            }
+
+            /// <summary>
+            /// Gets a value indicating whether access to the <see cref="T:System.Collections.ICollection" /> is synchronized (thread safe).
+            /// </summary>
+            public bool IsSynchronized
+            {
+                get { return Container.IsSynchronized; }
+            }
+
+            /// <summary>
+            /// Gets an object that can be used to synchronize access to the <see cref="T:System.Collections.ICollection" />.
+            /// </summary>
+            public object SyncRoot
+            {
+                get { return Container.SyncRoot; }
+            }
+
+            #endregion Public Properties
+
+            #region Public Methods
+
+            /// <summary>
+            /// Copies the elements of the <see cref="T:System.Collections.ICollection" /> to an <see cref="T:System.Array" />, starting at a particular <see cref="T:System.Array" /> index.
+            /// </summary>
+            /// <param name="array">The one-dimensional <see cref="T:System.Array" /> that is the destination of the elements copied from <see cref="T:System.Collections.ICollection" />. The <see cref="T:System.Array" /> must have zero-based indexing.</param>
+            /// <param name="index">The zero-based index in <paramref name="array" /> at which copying begins.</param>
+            public void CopyTo(Array array, int index)
+            {
+                var it = GetEnumerator();
+
+                while (it.MoveNext())
+                {
+                    array.SetValue(it, index++);
+                }
+            }
+
+            /// <summary>
+            /// Returns an enumerator that iterates through a collection.
+            /// </summary>
+            /// <returns>
+            /// An <see cref="T:System.Collections.IEnumerator" /> object that can be used to iterate through the collection.
+            /// </returns>
+            public abstract IEnumerator GetEnumerator();
+
+            #endregion Public Methods
+        }
+
+        private class KeyCollection : KeyValueCollectionBase
+        {
+            public KeyCollection(SequencedHashMap parent)
+                : base(parent)
+            {
+            }
+
+            public override IEnumerator GetEnumerator()
+            {
+                return new OrderedKeyEnumerator(Container);
+            }
+        }
+
+        private class ValueCollection : KeyValueCollectionBase
+        {
+            public ValueCollection(SequencedHashMap parent)
+                : base(parent)
+            {
+            }
+
+            public override IEnumerator GetEnumerator()
+            {
+                return new OrderedValueEnumerator(Container);
+            }
+        }
+
+        /// <summary>
+        /// Abstract base class to enumerate Key, Value, and KeyValue (DictionaryEntry) values in CircularLinkedList 
+        /// </summary>
+        protected abstract class OrderedDictionaryEnumeratorBase : IDictionaryEnumerator
+        {
+            private SequencedHashMap _container;
+            private SequenceRecord _current;
+            private long _targetRevision;
+
+            #region Protected Constructors
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="OrderedDictionaryEnumeratorBase"/> class.
+            /// </summary>
+            /// <param name="container">The container.</param>
+            protected OrderedDictionaryEnumeratorBase(SequencedHashMap container)
+            {
+                _container = container;
+                _current = container._scope;
+                _targetRevision = _container._revision;
+            }
+
+            #endregion Protected Constructors
+
+            #region Public Properties
+
+            /// <summary>
+            /// Gets the current object.
+            /// </summary>
+            public abstract object Current { get; }
+
+            /// <summary>
+            /// Gets both the key and the value of the current dictionary entry.
+            /// </summary>
+            public DictionaryEntry Entry
+            {
+                get { return new DictionaryEntry(_current.Key, _current.Value); }
+            }
+
+            /// <summary>
+            /// Gets the key of the current dictionary entry.
+            /// </summary>
+            public object Key
+            {
+                get { return _current.Key; }
+            }
+
+            /// <summary>
+            /// Gets the value of the current dictionary entry.
+            /// </summary>
+            public object Value
+            {
+                get { return _current.Value; }
+            }
+
+            #endregion Public Properties
+
+            #region Public Methods
+
+            /// <summary>
+            /// Advances the enumerator to the next element of the collection.
+            /// </summary>
+            /// <returns>
+            /// true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.
+            /// </returns>
+            /// <exception cref="System.InvalidOperationException">Enumerator was modified</exception>
+            public bool MoveNext()
+            {
+                // Check the parent modCount and throw exception if collection is modified while enumerating
+                if (_container._revision != _targetRevision)
+                {
+                    throw new InvalidOperationException("Enumerator was changed");
+                }
+
+                // traverse _objectList and return true/false indicating whether there are more items
+                if (_current.NextRecord == _container._scope)
+                {
+                    return false;
+                }
+                _current = _current.NextRecord;
+
+                return true;
+            }
+
+            /// <summary>
+            /// Sets the enumerator to its initial position, which is before the first element in the collection.
+            /// </summary>
+            public void Reset()
+            {
+                _current = _container._scope;
+            }
+
+            #endregion Public Methods
+        }
+
+        private class OrderedEntryEnumerator : OrderedDictionaryEnumeratorBase
+        {
+            public override object Current
+            {
+                get { return Entry; }
+            }
+
+            public OrderedEntryEnumerator(SequencedHashMap container)
+                : base(container)
+            {
+            }
+        }
+
+        private class OrderedKeyEnumerator : OrderedDictionaryEnumeratorBase
+        {
+            public override object Current
+            {
+                get { return Key; }
+            }
+
+            public OrderedKeyEnumerator(SequencedHashMap container)
+                : base(container)
+            {
+            }
+        }
+
+        private class OrderedValueEnumerator : OrderedDictionaryEnumeratorBase
+        {
+            public override object Current
+            {
+                get { return Value; }
+            }
+
+            public OrderedValueEnumerator(SequencedHashMap container)
+                : base(container)
+            {
+            }
+        }
+
+        #region Private Fields
+
+        private object _syncRoot = new object();
+        private readonly Hashtable _hashtableRecords;
+        private SequenceRecord _scope;
+
+        private long _revision; // sum of inserts, updates and deletes
+
+        #endregion Private Fields
+
+        #region Public Constructors
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        public SequencedHashMap()
+            : this(0)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        /// <param name="capacity">The capacity.</param>
+        public SequencedHashMap(int capacity)
+            : this(capacity, 1.0F)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        /// <param name="capacity">The capacity.</param>
+        /// <param name="loadFactor">The load factor.</param>
+        public SequencedHashMap(int capacity, float loadFactor)
+            : this(capacity, loadFactor, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        /// <param name="capacity">The capacity.</param>
+        /// <param name="equalityComparer">The equality comparer.</param>
+        public SequencedHashMap(int capacity, IEqualityComparer equalityComparer)
+            : this(capacity, 1.0F, equalityComparer)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        /// <param name="equalityComparer">The equality comparer.</param>
+        public SequencedHashMap(IEqualityComparer equalityComparer)
+            : this(0, 1.0F, equalityComparer)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SequencedHashMap"/> class.
+        /// </summary>
+        /// <param name="capacity">The capacity.</param>
+        /// <param name="loadFactor">The load factor.</param>
+        /// <param name="equalityComparer">The equality comparer.</param>
+        public SequencedHashMap(int capacity, float loadFactor, IEqualityComparer equalityComparer)
+        {
+            _scope = new SequenceRecord();
+            _scope.PrevRecord = _scope;
+            _scope.NextRecord = _scope;
+
+            _hashtableRecords = new Hashtable(capacity, loadFactor, equalityComparer);
+        }
+
+        #endregion Public Constructors
+
+        #region IDictionary implementation
+
+        /// <summary>
+        /// Adds an element with the provided key and value to the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        /// <param name="key">The <see cref="T:System.Object" /> to use as the key of the element to add.</param>
+        /// <param name="value">The <see cref="T:System.Object" /> to use as the value of the element to add.</param>
+        public virtual void Add(object key, object value)
+        {
+            this[key] = value;
+        }
+
+        /// <summary>
+        /// Removes all elements from the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        public void Clear()
+        {
+            _revision++;
+            _hashtableRecords.Clear();
+
+            _scope.PrevRecord = _scope;
+            _scope.NextRecord = _scope;
+        }
+
+        /// <summary>
+        /// Determines whether the <see cref="T:System.Collections.IDictionary" /> object contains an element with the specified key.
+        /// </summary>
+        /// <param name="key">The key to locate in the <see cref="T:System.Collections.IDictionary" /> object.</param>
+        /// <returns>
+        /// true if the <see cref="T:System.Collections.IDictionary" /> contains an element with the key; otherwise, false.
+        /// </returns>
+        public bool Contains(object key)
+        {
+            return ContainsKey(key);
+        }
+
+        /// <summary>
+        /// Returns an <see cref="T:System.Collections.IDictionaryEnumerator" /> object for the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        /// <returns>
+        /// An <see cref="T:System.Collections.IDictionaryEnumerator" /> object for the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </returns>
+        public IDictionaryEnumerator GetEnumerator()
+        {
+            return new OrderedEntryEnumerator(this);
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether the <see cref="T:System.Collections.IDictionary" /> object has a fixed size.
+        /// </summary>
+        public bool IsFixedSize
+        {
+            get { return false; }
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether the <see cref="T:System.Collections.IDictionary" /> object is read-only.
+        /// </summary>
+        public bool IsReadOnly
+        {
+            get { return false; }
+        }
+
+        /// <summary>
+        /// Gets an <see cref="T:System.Collections.ICollection" /> object containing the keys of the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        public ICollection Keys
+        {
+            get { return new KeyCollection(this); }
+        }
+
+        /// <summary>
+        /// Removes the element with the specified key from the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        /// <param name="key">The key of the element to remove.</param>
+        public void Remove(object key)
+        {
+            var record = _hashtableRecords[key] as SequenceRecord;
+            if (record != null)
+            {
+                _hashtableRecords.Remove(key);
+                _revision++;
+                RemoveRecord(record);
+            }
+        }
+
+        /// <summary>
+        /// Returns a <see cref="System.String" /> that represents this instance.
+        /// </summary>
+        /// <returns>
+        /// A <see cref="System.String" /> that represents this instance.
+        /// </returns>
+        public override string ToString()
+        {
+            var sb = new StringBuilder();
+            sb.Append("[");
+            var current = _scope.NextRecord;
+            while(current != _scope)
+            {
+                sb.Append(current.Key);
+                sb.Append("=");
+                sb.Append(current.Value);
+                if(current.NextRecord != _scope)
+                {
+                    sb.Append(",");
+                }
+                current = current.NextRecord;
+            }
+            sb.Append("]");
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Gets an <see cref="T:System.Collections.ICollection" /> object containing the values 
+        /// in the <see cref="T:System.Collections.IDictionary" /> object.
+        /// </summary>
+        public ICollection Values
+        {
+            get { return new ValueCollection(this); }
+        }
+
+        /// <summary>
+        /// Gets or sets the element with the specified key.
+        /// </summary>
+        /// <param name="objectKey">The key.</param>
+        /// <returns></returns>
+        public virtual object this[object objectKey]
+        {
+            get
+            {
+                var record = _hashtableRecords[objectKey] as SequenceRecord;
+                if (record != null)
+                    return record.Value;
+                else return null;
+            }
+            set
+            {
+                _revision++;
+
+                var record = _hashtableRecords[objectKey] as SequenceRecord;
+                if (record != null)
+                {
+                    RemoveRecord(record);
+                    record.Value = value;
+                }
+                else
+                {
+                    record = new SequenceRecord(objectKey, value);
+                    _hashtableRecords[objectKey] = record;
+                }
+
+                InsertRecord(record);
+            }
+        }
+
+        /// <summary>
+        /// Copies the elements of the <see cref="T:System.Collections.ICollection" /> to an <see cref="T:System.Array" />, starting at a particular <see cref="T:System.Array" /> index.
+        /// </summary>
+        /// <param name="array">The one-dimensional <see cref="T:System.Array" /> that is the destination of the elements copied from <see cref="T:System.Collections.ICollection" />. The <see cref="T:System.Array" /> must have zero-based indexing.</param>
+        /// <param name="index">The zero-based index in <paramref name="array" /> at which copying begins.</param>
+        public void CopyTo(Array array, int index)
+        {
+            var enumerator = GetEnumerator();
+            while (enumerator.MoveNext())
+            {
+                array.SetValue(enumerator.Current, index++);
+            }
+        }
+
+        /// <summary>
+        /// Gets the number of elements contained in the <see cref="T:System.Collections.ICollection" />.
+        /// </summary>
+        public int Count
+        {
+            get { return _hashtableRecords.Count; }
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether access to the <see cref="T:System.Collections.ICollection" /> is synchronized (thread safe).
+        /// </summary>
+        public bool IsSynchronized
+        {
+            get { return false; }
+        }
+
+        /// <summary>
+        /// Gets an object that can be used to synchronize access to the <see cref="T:System.Collections.ICollection" />.
+        /// </summary>
+        public object SyncRoot
+        {
+            get { return _syncRoot; }
+        }
+
+        /// <summary>
+        /// Returns an enumerator that iterates through a collection.
+        /// </summary>
+        /// <returns>
+        /// An <see cref="T:System.Collections.IEnumerator" /> object that can be used to iterate through the collection.
+        /// </returns>
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return new OrderedEntryEnumerator(this);
+        }
+
+        #endregion
+
+        #region IDeserializationCallback implementation
+
+        /// <summary>
+        /// Runs when the entire object graph has been deserialized.
+        /// </summary>
+        /// <param name="sender">The object that initiated the callback. The functionality for this parameter is not currently implemented.</param>
+        public void OnDeserialization(object sender)
+        {
+            _hashtableRecords.OnDeserialization(sender);
+        }
+
+        #endregion
+
+        private void RemoveRecord(SequenceRecord record)
+        {
+            record.NextRecord.PrevRecord = record.PrevRecord;
+            record.PrevRecord.NextRecord = record.NextRecord;
+        }
+
+        private void InsertRecord(SequenceRecord record)
+        {
+		    record.NextRecord = _scope;
+            record.PrevRecord = _scope.PrevRecord;
+            
+			_scope.PrevRecord.NextRecord = record;
+            _scope.PrevRecord = record;
+        }
+
+        /// <summary>
+        /// Determines whether the specified key contains key.
+        /// </summary>
+        /// <param name="key">The key.</param>
+        /// <returns></returns>
+        public virtual bool ContainsKey(object key)
+        {
+            return _hashtableRecords.ContainsKey(key);
+        }
+
+        /// <summary>
+        /// Determines whether the specified value contains value.
+        /// </summary>
+        /// <param name="value">The value.</param>
+        /// <returns></returns>
+        public virtual bool ContainsValue(object value)
+        {
+            if (value != null)
+            {
+                var current = _scope.NextRecord;
+                while (current != _scope)
+                {
+                    if (value.Equals(current.Value))
+                        return true;
+
+                    current = current.NextRecord;
+                }
+            }
+            else
+            {
+                var current = _scope.NextRecord;
+                while (current != _scope)
+                {
+                    if (current.Value == null)
+                        return true;
+
+                    current = current.NextRecord;
+                }
+            }
+            return false;
+        }
+
+        private bool HasRecords
+        {
+            get { return _scope.NextRecord != _scope; }
+        }
+
+        private SequenceRecord GetFirstRecord()
+        {
+            return (HasRecords) ? _scope.NextRecord : null;
+        }
+
+        private SequenceRecord GetLastRecord()
+        {
+            return (HasRecords) ? _scope.PrevRecord : null;
+        }
+
+        /// <summary>
+        /// Gets the first key.
+        /// </summary>
+        /// <value>
+        /// The first key.
+        /// </value>
+        public virtual object FirstKey
+        {
+            get
+            {
+                var first = GetFirstRecord();
+                return first != null ? first.Key : null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the first value.
+        /// </summary>
+        /// <value>
+        /// The first value.
+        /// </value>
+        public virtual object FirstValue
+        {
+            get
+            {
+                var first = GetFirstRecord();
+                return first != null ? first.Value : null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the last key.
+        /// </summary>
+        /// <value>
+        /// The last key.
+        /// </value>
+        public virtual object LastKey
+        {
+            get
+            {
+                var last = GetLastRecord();
+                return last != null ? last.Key : null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the last value.
+        /// </summary>
+        /// <value>
+        /// The last value.
+        /// </value>
+        public virtual object LastValue
+        {
+            get
+            {
+                var last = GetLastRecord();
+                return last != null ? last.Value : null;
+            }
+        }
+
+    }
 }

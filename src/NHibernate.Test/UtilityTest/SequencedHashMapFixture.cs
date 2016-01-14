@@ -65,6 +65,17 @@ namespace NHibernate.Test.UtilityTest
 			Assert.AreEqual(4, _shm.Count);
 		}
 
+        [Test]
+        public void Update()
+        {
+            object key = "test1";
+            object newValue = "test1's value";
+
+            _shm[key] = newValue;
+            Assert.AreEqual(newValue, _shm[key]);
+            Assert.AreEqual(3, _shm.Count);
+        }
+
 		[Test]
 		public void Clear()
 		{
