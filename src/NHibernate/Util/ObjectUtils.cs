@@ -1,4 +1,6 @@
-﻿using System;
+﻿// 2015-12-22 - Re-implemented by Ugasoft, LLC to remove Apache copyrighted code that may conflict with GPL licensing
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;

@@ -1,6 +1,13 @@
 Build 3.3.1.GA
 =============================
 
+** Changes in the forked version 3.3.1.GA of NHibernate at https://github.com/romanlazarev/nhibernate-core(Branch 3.3.1GA_APA)
+*  2015-12-22 - Re-implemented following files by Ugasoft LLC to remove Apache copyrighted code that may conflict with GPL licensing:
+    * src\NHibernate\Util\LRUMap.cs
+    * src\NHibernate\Util\ObjectUtils.cs
+    * src\NHibernate\Util\SequencedHashMap.cs
+    * src\NHibernate.Test\UtilityTest\SequencedHashMapFixture.cs
+
 ** Sub-task
     * [NH-3167] - Support for Microsoft Sql Server 2012 sequences
     * [NH-3170] - Add native "iif" function to MsSql2012Dialect
