@@ -1,6 +1,13 @@
 Build 3.3.3.GA
 =============================
 
+** Changes in the forked version 3.3.3.GA of NHibernate at https://github.com/romanlazarev/nhibernate-core(Branch Branch_3.3.3GA)
+*  2015-12-22 - Re-implemented following files by Ugasoft LLC to remove Apache copyrighted code that may conflict with GPL licensing:
+    * src\NHibernate\Util\LRUMap.cs
+    * src\NHibernate\Util\ObjectUtils.cs
+    * src\NHibernate\Util\SequencedHashMap.cs
+    * src\NHibernate.Test\UtilityTest\SequencedHashMapFixture.cs
+
 BEWARE: In versions prior to 3.3.3.CR1, the handling of the LINQ Take() method
         was flawed - no matter where in the query Take() was placed it was
         always applied as if it had been placed at the end. 3.3.3 fixes this,

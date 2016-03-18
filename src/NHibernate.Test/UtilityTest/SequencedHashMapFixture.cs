@@ -1,3 +1,5 @@
+// 2015-12-22 - Re-implemented by Ugasoft, LLC to remove Apache copyrighted code that may conflict with GPL licensing
+
 using System;
 using System.Collections;
 using System.Collections.Specialized;
